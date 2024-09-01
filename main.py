@@ -3,6 +3,7 @@ import re
 import string
 import random
 import tweepy
+import logging
 import requests
 import asyncpraw
 import moviepy.editor as mpe
@@ -15,6 +16,14 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters
 import xml.etree.ElementTree as ET
 
 load_dotenv()
+
+logger = logging.getLogger('trash_meme_bot')
+logger.setLevel(logging.DEBUG)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s [%(name)s] %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
 
 TEMP_DIR = os.getenv('TEMP_DIR')
 TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -88,8 +97,10 @@ def download_video(video_url):
 
 
 async def get_pikabu_content(url, user):
+    logger.debug(f'Get pikabu url {url}')
     url_parts = url.split('\n')
     modify_url = url_parts[1] if len(url_parts) > 1 else url_parts[0]
+    logger.debug(f'Get pikabu modify url {modify_url}')
     response = requests.get(modify_url)
     soup = BeautifulSoup(response.text, 'html.parser')
 
@@ -128,8 +139,10 @@ async def get_pikabu_content(url, user):
 
 
 async def get_reddit_content(url, user):
+    logger.debug(f'Get reddit url {url}')
     response = requests.get(url, allow_redirects=True)
     modify_url = response.url
+    logger.debug(f'Get reddit modify url {modify_url}')
 
     submission = await reddit.submission(url=modify_url)
     title = submission.title
@@ -163,6 +176,7 @@ async def get_reddit_content(url, user):
 
 
 async def get_x_content(url, user):
+    logger.debug(f'Get x url {url}')
     tweet_id = url.split('/')[-1]
     tweet = x_api.get_status(tweet_id, tweet_mode='extended')
 
@@ -204,38 +218,50 @@ async def process_content(update, title, content):
             )
         if block.get('images'):
             for img_url in block['images']:
-                await bot.send_photo(
-                    chat_id=update.message.chat.id,
-                    photo=img_url,
-                    read_timeout=120,
-                    write_timeout=120,
-                    connect_timeout=120,
-                    pool_timeout=120
-                )
-        if block.get('videos'):
-            for video_url in block['videos']:
-                video_response = requests.get(video_url, timeout=120)
-                video_file = BytesIO(video_response.content)
-                video_file.name = 'video.mp4'
-                await bot.send_video(
-                    chat_id=update.message.chat.id,
-                    video=video_file,
-                    read_timeout=120,
-                    write_timeout=120,
-                    connect_timeout=120,
-                    pool_timeout=120
-                )
-        if block.get('video_files'):
-            for video_file in block['video_files']:
-                with open(video_file, 'rb') as f:
-                    await bot.send_video(
+                try:
+                    await bot.send_photo(
                         chat_id=update.message.chat.id,
-                        video=f,
+                        photo=img_url,
                         read_timeout=120,
                         write_timeout=120,
                         connect_timeout=120,
                         pool_timeout=120
                     )
+                except Exception as e:
+                    message = f"Can't send image {img_url}\n{e}"
+                    logger.debug(message)
+        if block.get('videos'):
+            for video_url in block['videos']:
+                try:
+                    video_response = requests.get(video_url, timeout=120)
+                    video_file = BytesIO(video_response.content)
+                    video_file.name = 'video.mp4'
+                    await bot.send_video(
+                        chat_id=update.message.chat.id,
+                        video=video_file,
+                        read_timeout=120,
+                        write_timeout=120,
+                        connect_timeout=120,
+                        pool_timeout=120
+                    )
+                except Exception as e:
+                    message = f"Can't send video {video_url}\n{e}"
+                    logger.debug(message)
+        if block.get('video_files'):
+            for video_file in block['video_files']:
+                try:
+                    with open(video_file, 'rb') as f:
+                        await bot.send_video(
+                            chat_id=update.message.chat.id,
+                            video=f,
+                            read_timeout=120,
+                            write_timeout=120,
+                            connect_timeout=120,
+                            pool_timeout=120
+                        )
+                except Exception as e:
+                    message = f"Can't send video file {video_file}\n{e}"
+                    logger.debug(message)
 
 
 def format_content(content):
@@ -271,7 +297,10 @@ async def check_links(update: Update, context) -> None:
             await process_content(update, title, content)
             await update.message.delete()
     except Exception as e:
-        await bot.send_message(chat_id=chat_id, text=f'Не удалось обработать ссылку\n{e}')
+        await bot.send_message(
+            chat_id=chat_id, text=f'Не удалось обработать ссылку\n{e}',
+            disable_web_page_preview=True
+        )
 
 
 if __name__ == '__main__':
