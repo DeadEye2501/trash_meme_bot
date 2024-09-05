@@ -8,6 +8,7 @@ WorkingDirectory=/trash_meme_bot/
 ExecStart=/root/.local/share/virtualenvs/trash_meme_bot-a94sWtX0/bin/python /trash_meme_bot/main.py
 EnvironmentFile=/trash_meme_bot/.env
 Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target

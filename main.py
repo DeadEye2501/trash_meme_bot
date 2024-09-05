@@ -25,6 +25,10 @@ formatter = logging.Formatter('%(asctime)s [%(name)s] %(levelname)s - %(message)
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
+PARSE_PIKABU = os.getenv('PARSE_PIKABU') if os.getenv('PARSE_PIKABU') else None
+PARSE_REDDIT = os.getenv('PARSE_REDDIT') if os.getenv('PARSE_REDDIT') else None
+PARSE_X = os.getenv('PARSE_X') if os.getenv('PARSE_X') else None
+
 TEMP_DIR = os.getenv('TEMP_DIR')
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 REDDIT_REGEX = r"(https?://)?(www\.)?reddit\.com/[^\s]+"
@@ -33,15 +37,17 @@ X_REGEX = r"(https?://)?(www\.)?(x\.com)/[^\s]+"
 
 bot = telegram.Bot(token=TOKEN)
 
-reddit = asyncpraw.Reddit(
-    client_id=os.getenv('REDDIT_CLIENT_ID'),
-    client_secret=os.getenv('REDDIT_CLIENT_SECRET'),
-    user_agent=os.getenv('REDDIT_USER_AGENT')
-)
+if PARSE_REDDIT:
+    reddit = asyncpraw.Reddit(
+        client_id=os.getenv('REDDIT_CLIENT_ID'),
+        client_secret=os.getenv('REDDIT_CLIENT_SECRET'),
+        user_agent=os.getenv('REDDIT_USER_AGENT')
+    )
 
-auth = tweepy.OAuthHandler(os.getenv('X_API_KEY'), os.getenv('X_API_SECRET'))
-auth.set_access_token(os.getenv('X_ACCESS_TOKEN'), os.getenv('X_ACCESS_SECRET'))
-x_api = tweepy.API(auth)
+if PARSE_X:
+    auth = tweepy.OAuthHandler(os.getenv('X_API_KEY'), os.getenv('X_API_SECRET'))
+    auth.set_access_token(os.getenv('X_ACCESS_TOKEN'), os.getenv('X_ACCESS_SECRET'))
+    x_api = tweepy.API(auth)
 
 
 def generate_random_string(length=5):
@@ -67,7 +73,7 @@ def parse_mpd_file(mpd_path):
     return max_audio_url
 
 
-def download_video(video_url):
+def download_reddit_video(video_url):
     video_file_name = os.path.join(os.getenv('TEMP_DIR'), f'temp_video_{generate_random_string()}.mp4')
     with open(video_file_name, 'wb') as video_file:
         video_file.write(requests.get(video_url).content)
@@ -166,7 +172,7 @@ async def get_reddit_content(url, user):
         video_url = video_data['fallback_url']
 
         if video_data['has_audio']:
-            compiled_video = download_video(video_url)
+            compiled_video = download_reddit_video(video_url)
             video_temp_path = os.path.join(os.getenv('TEMP_DIR'), compiled_video)
             content.append({'video_files': [video_temp_path]})
         else:
@@ -282,17 +288,17 @@ async def check_links(update: Update, context) -> None:
     chat_id = update.message.chat.id
 
     try:
-        if re.search(PIKABU_REGEX, message_text, re.IGNORECASE):
+        if re.search(PIKABU_REGEX, message_text, re.IGNORECASE) and PARSE_PIKABU:
             title, content = await get_pikabu_content(message_text, user)
             await process_content(update, title, content)
             await update.message.delete()
 
-        elif re.search(REDDIT_REGEX, message_text, re.IGNORECASE):
+        elif re.search(REDDIT_REGEX, message_text, re.IGNORECASE) and PARSE_REDDIT:
             title, content = await get_reddit_content(message_text, user)
             await process_content(update, title, content)
             await update.message.delete()
 
-        elif re.search(X_REGEX, message_text, re.IGNORECASE):
+        elif re.search(X_REGEX, message_text, re.IGNORECASE) and PARSE_X:
             title, content = await get_x_content(message_text, user)
             await process_content(update, title, content)
             await update.message.delete()
