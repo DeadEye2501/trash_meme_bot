@@ -25,9 +25,9 @@ formatter = logging.Formatter('%(asctime)s [%(name)s] %(levelname)s - %(message)
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
-PARSE_PIKABU = os.getenv('PARSE_PIKABU') if os.getenv('PARSE_PIKABU') else None
-PARSE_REDDIT = os.getenv('PARSE_REDDIT') if os.getenv('PARSE_REDDIT') else None
-PARSE_X = os.getenv('PARSE_X') if os.getenv('PARSE_X') else None
+PARSE_PIKABU = bool(int(os.getenv('PARSE_PIKABU')))
+PARSE_REDDIT = bool(int(os.getenv('PARSE_REDDIT')))
+PARSE_X = bool(int(os.getenv('PARSE_X')))
 
 TEMP_DIR = os.getenv('TEMP_DIR')
 TOKEN = os.getenv('TELEGRAM_TOKEN')
