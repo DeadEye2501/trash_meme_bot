@@ -11,6 +11,9 @@ asyncpraw = "*"
 moviepy = "*"
 beautifulsoup4 = "*"
 python-telegram-bot = "*"
+playwright = "*"
+jmespath = "*"
+scrapfly-sdk = "*"
 
 [dev-packages]
 

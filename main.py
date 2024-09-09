@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import telegram
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters
+from playwright.async_api import async_playwright
 import xml.etree.ElementTree as ET
 
 load_dotenv()
@@ -183,26 +184,52 @@ async def get_reddit_content(url, user):
 
 async def get_x_content(url, user):
     logger.debug(f'Get x url {url}')
-    tweet_id = url.split('/')[-1]
-    tweet = x_api.get_status(tweet_id, tweet_mode='extended')
-
-    title = tweet.user.screen_name
-    title = f'[{user.full_name}](tg://user?id={user.id})\n{title}\n[Посмотреть оригинал]({url})'
+    _xhr_calls = []
     content = []
 
-    if tweet.full_text:
-        content.append({'text': tweet.full_text})
+    def intercept_response(response):
+        if response.request.resource_type == "xhr":
+            _xhr_calls.append(response)
+        return response
 
-    images = [media['media_url_https'] for media in tweet.entities.get('media', [])]
-    if images:
-        content.append({'images': images})
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context = await browser.new_context(viewport={"width": 1920, "height": 1080})
+        page = await context.new_page()
 
-    videos = [media['video_info']['variants'][0]['url'] for media in tweet.entities.get('media', []) if
-              'video_info' in media]
-    if videos:
-        content.append({'videos': videos})
+        page.on("response", intercept_response)
+        await page.goto(url)
+        await page.wait_for_selector("[data-testid='tweet']")
 
-    return title, content
+        tweet_calls = [f for f in _xhr_calls if "TweetResultByRestId" in f.url]
+        for xhr in tweet_calls:
+            data = await xhr.json()
+            if data:
+                title = f'[{user.full_name}](tg://user?id={user.id})\n[Посмотреть оригинал]({url})'
+                data = data['data']['tweetResult']['result']['legacy']
+
+                if data.get('full_text'):
+                    content.append({'text': data['full_text']})
+
+                if data.get('entities'):
+                    if data['entities'].get('media'):
+                        for item in data['entities']['media']:
+                            if item['type'] == 'photo':
+                                content.append({'images': [item['media_url_https']]})
+
+                            elif item['type'] == 'video':
+                                max_bitrate = 0
+                                max_bitrate_variant = 0
+                                for num, variant in enumerate(item['video_info']['variants']):
+                                    if variant['content_type'] == 'video/mp4':
+                                        if variant['bitrate'] > max_bitrate:
+                                            max_bitrate = variant['bitrate']
+                                            max_bitrate_variant = num
+                                content.append(
+                                    {'videos': [item['video_info']['variants'][max_bitrate_variant]['url']]})
+
+        await browser.close()
+        return title, content
 
 
 async def process_content(update, title, content):
