@@ -56,6 +56,11 @@ def generate_random_string(length=5):
     return ''.join(random.choice(letters) for _ in range(length))
 
 
+def generate_title(user, title, url):
+    # return f'[{user.full_name}](tg://user?id={user.id})\n{title}\n[Посмотреть оригинал]({url})'
+    return f'{user.full_name}\n{title}\n[Посмотреть оригинал]({url})'
+
+
 def parse_mpd_file(mpd_path):
     tree = ET.parse(mpd_path)
     root = tree.getroot()
@@ -113,7 +118,7 @@ async def get_pikabu_content(url, user):
 
     title = soup.find('h1', class_='story__title')
     title = title.text.strip() if title else 'No Title'
-    title = f'[{user.full_name}](tg://user?id={user.id})\n{title}\n[Посмотреть оригинал]({url})'
+    title = generate_title(user, title, url)
 
     content = []
 
@@ -153,7 +158,7 @@ async def get_reddit_content(url, user):
 
     submission = await reddit.submission(url=modify_url)
     title = submission.title
-    title = f'[{user.full_name}](tg://user?id={user.id})\n{title}\n[Посмотреть оригинал]({url})'
+    title = generate_title(user, title, url)
     content = []
 
     if submission.selftext:
@@ -198,14 +203,14 @@ async def get_x_content(url, user):
         page = await context.new_page()
 
         page.on("response", intercept_response)
-        await page.goto(url)
+        await page.goto(url, timeout=120000)
         await page.wait_for_selector("[data-testid='tweet']")
 
         tweet_calls = [f for f in _xhr_calls if "TweetResultByRestId" in f.url]
         for xhr in tweet_calls:
             data = await xhr.json()
             if data:
-                title = f'[{user.full_name}](tg://user?id={user.id})\n[Посмотреть оригинал]({url})'
+                title = generate_title(user, title, url)
                 data = data['data']['tweetResult']['result']['legacy']
 
                 if data.get('full_text'):
@@ -222,7 +227,7 @@ async def get_x_content(url, user):
                                 max_bitrate_variant = 0
                                 for num, variant in enumerate(item['video_info']['variants']):
                                     if variant['content_type'] == 'video/mp4':
-                                        if variant['bitrate'] > max_bitrate:
+                                        if 1000000 > variant['bitrate'] > max_bitrate:
                                             max_bitrate = variant['bitrate']
                                             max_bitrate_variant = num
                                 content.append(
