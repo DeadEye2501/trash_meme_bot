@@ -56,9 +56,10 @@ def generate_random_string(length=5):
     return ''.join(random.choice(letters) for _ in range(length))
 
 
-def generate_title(user, title, url):
-    # return f'[{user.full_name}](tg://user?id={user.id})\n{title}\n[Посмотреть оригинал]({url})'
-    return f'{user.full_name}\n{title}\n[Посмотреть оригинал]({url})'
+def generate_title(user, url, title=None):
+    title = f'{title}\n' if title else ''
+    # return f'[{user.full_name}](tg://user?id={user.id})\n{title}[Посмотреть оригинал]({url})'
+    return f'{user.full_name}\n{title}[Посмотреть оригинал]({url})'
 
 
 def parse_mpd_file(mpd_path):
@@ -118,7 +119,7 @@ async def get_pikabu_content(url, user):
 
     title = soup.find('h1', class_='story__title')
     title = title.text.strip() if title else 'No Title'
-    title = generate_title(user, title, url)
+    title = generate_title(user, url, title)
 
     content = []
 
@@ -158,7 +159,7 @@ async def get_reddit_content(url, user):
 
     submission = await reddit.submission(url=modify_url)
     title = submission.title
-    title = generate_title(user, title, url)
+    title = generate_title(user, url, title)
     content = []
 
     if submission.selftext:
@@ -210,7 +211,7 @@ async def get_x_content(url, user):
         for xhr in tweet_calls:
             data = await xhr.json()
             if data:
-                title = generate_title(user, title, url)
+                title = generate_title(user, url)
                 data = data['data']['tweetResult']['result']['legacy']
 
                 if data.get('full_text'):
@@ -249,6 +250,7 @@ async def process_content(update, title, content):
             await bot.send_message(
                 chat_id=update.message.chat.id,
                 text=block['text'],
+                disable_web_page_preview=True,
                 read_timeout=120,
                 write_timeout=120,
                 connect_timeout=120,
