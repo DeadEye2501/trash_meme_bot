@@ -81,17 +81,17 @@ def parse_mpd_file(mpd_path):
 
 
 def download_reddit_video(video_url):
-    video_file_name = os.path.join(os.getenv('TEMP_DIR'), f'temp_video_{generate_random_string()}.mp4')
+    video_file_name = os.path.join(TEMP_DIR, f'temp_video_{generate_random_string()}.mp4')
     with open(video_file_name, 'wb') as video_file:
         video_file.write(requests.get(video_url).content)
 
     mpd_url = video_url.split("DASH_")[0] + "DASHPlaylist.mpd"
-    mpd_file_name = os.path.join(os.getenv('TEMP_DIR'), f'temp_playlist_{generate_random_string()}.mpd')
+    mpd_file_name = os.path.join(TEMP_DIR, f'temp_playlist_{generate_random_string()}.mpd')
     with open(mpd_file_name, 'wb') as f:
         f.write(requests.get(mpd_url).content)
 
     audio_url = video_url.split("DASH_")[0] + parse_mpd_file(mpd_file_name)
-    audio_file_name = os.path.join(os.getenv('TEMP_DIR'), f'temp_audio_{generate_random_string()}.mp4')
+    audio_file_name = os.path.join(TEMP_DIR, f'temp_audio_{generate_random_string()}.mp4')
     with open(audio_file_name, 'wb') as audio_file:
         audio_file.write(requests.get(audio_url).content)
 
@@ -100,7 +100,7 @@ def download_reddit_video(video_url):
     video_clip = mpe.VideoFileClip(video_file_name)
     audio_clip = mpe.AudioFileClip(audio_file_name)
     final_clip = video_clip.set_audio(audio_clip)
-    final_clip.write_videofile(os.path.join(os.getenv('TEMP_DIR'), output_file_name), logger=None)
+    final_clip.write_videofile(os.path.join(TEMP_DIR, output_file_name), logger=None)
 
     os.remove(video_file_name)
     os.remove(audio_file_name)
@@ -180,7 +180,7 @@ async def get_reddit_content(url, user):
 
         if video_data['has_audio']:
             compiled_video = download_reddit_video(video_url)
-            video_temp_path = os.path.join(os.getenv('TEMP_DIR'), compiled_video)
+            video_temp_path = os.path.join(TEMP_DIR, compiled_video)
             content.append({'video_files': [video_temp_path]})
         else:
             content.append({'videos': [video_url]})
@@ -302,18 +302,6 @@ async def process_content(update, title, content):
                 except Exception as e:
                     message = f"Can't send video file {video_file}\n{e}"
                     logger.debug(message)
-
-
-def format_content(content):
-    formatted_content = []
-    for item in content:
-        if item['text']:
-            formatted_content.append(item['text'])
-        for img in item['images']:
-            formatted_content.append(img)
-        for vid in item['videos']:
-            formatted_content.append(vid)
-    return '\n'.join(formatted_content)
 
 
 async def check_links(update: Update, context) -> None:
