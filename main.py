@@ -33,7 +33,7 @@ PARSE_X = bool(int(os.getenv('PARSE_X')))
 TEMP_DIR = os.getenv('TEMP_DIR')
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 REDDIT_REGEX = r"(https?://)?(www\.)?reddit\.com/[^\s]+"
-PIKABU_REGEX = r"(https?://)?(www\.)?pikabu\.ru/[^\s]+"
+PIKABU_REGEX = r"(https?://)?(www\.)?pikabu\.ru(/[^\s]*)?|link=https%3A%2F%2Fpikabu\.ru%2F[^\s]+"
 X_REGEX = r"(https?://)?(www\.)?(x\.com)/[^\s]+"
 
 bot = telegram.Bot(token=TOKEN)
