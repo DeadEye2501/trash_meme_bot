@@ -6,7 +6,8 @@ import tweepy
 import logging
 import requests
 import asyncpraw
-import moviepy.editor as mpe
+from moviepy.video.io.VideoFileClip import VideoFileClip
+from moviepy.audio.io.AudioFileClip import AudioFileClip
 from io import BytesIO
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -91,16 +92,31 @@ def download_reddit_video(video_url):
         f.write(requests.get(mpd_url).content)
 
     audio_url = video_url.split("DASH_")[0] + parse_mpd_file(mpd_file_name)
+    if not audio_url:
+        return video_file_name
+
     audio_file_name = os.path.join(TEMP_DIR, f'temp_audio_{generate_random_string()}.mp4')
     with open(audio_file_name, 'wb') as audio_file:
         audio_file.write(requests.get(audio_url).content)
 
     output_file_name = f'compiled_video_{generate_random_string()}.mp4'
+    output_path = os.path.join(TEMP_DIR, output_file_name)
 
-    video_clip = mpe.VideoFileClip(video_file_name)
-    audio_clip = mpe.AudioFileClip(audio_file_name)
-    final_clip = video_clip.set_audio(audio_clip)
-    final_clip.write_videofile(os.path.join(TEMP_DIR, output_file_name), logger=None)
+    video_clip = VideoFileClip(video_file_name)
+    audio_clip = AudioFileClip(audio_file_name)
+    
+    video_clip.audio = audio_clip
+    video_clip.write_videofile(
+        output_path,
+        codec='libx264',
+        audio_codec='aac',
+        temp_audiofile='temp-audio.m4a',
+        remove_temp=True,
+        logger=None
+    )
+    
+    video_clip.close()
+    audio_clip.close()
 
     os.remove(video_file_name)
     os.remove(audio_file_name)
