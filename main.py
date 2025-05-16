@@ -16,6 +16,8 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters
 from playwright.async_api import async_playwright
 import xml.etree.ElementTree as ET
+import asyncio
+from telegram.error import TimedOut, NetworkError
 
 load_dotenv()
 
@@ -254,70 +256,92 @@ async def get_x_content(url, user):
         return title, content
 
 
+async def retry_send_message(bot, chat_id, text, **kwargs):
+    max_retries = 3
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            return await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        except (TimedOut, NetworkError) as e:
+            if attempt == max_retries - 1:
+                raise
+            logger.warning(f"Попытка {attempt + 1} не удалась: {str(e)}. Повторная попытка через {retry_delay} секунд...")
+            await asyncio.sleep(retry_delay)
+            retry_delay *= 2
+
+
 async def process_content(update, title, content):
-    await bot.send_message(
-        chat_id=update.message.chat.id,
-        text=title,
-        disable_web_page_preview=True,
-        parse_mode='Markdown'
-    )
-    for block in content:
-        if block.get('text'):
-            await bot.send_message(
-                chat_id=update.message.chat.id,
-                text=block['text'],
-                disable_web_page_preview=True,
-                read_timeout=120,
-                write_timeout=120,
-                connect_timeout=120,
-                pool_timeout=120
-            )
-        if block.get('images'):
-            for img_url in block['images']:
-                try:
-                    await bot.send_photo(
-                        chat_id=update.message.chat.id,
-                        photo=img_url,
-                        read_timeout=120,
-                        write_timeout=120,
-                        connect_timeout=120,
-                        pool_timeout=120
-                    )
-                except Exception as e:
-                    message = f"Can't send image {img_url}\n{e}"
-                    logger.debug(message)
-        if block.get('videos'):
-            for video_url in block['videos']:
-                try:
-                    video_response = requests.get(video_url, timeout=120)
-                    video_file = BytesIO(video_response.content)
-                    video_file.name = 'video.mp4'
-                    await bot.send_video(
-                        chat_id=update.message.chat.id,
-                        video=video_file,
-                        read_timeout=120,
-                        write_timeout=120,
-                        connect_timeout=120,
-                        pool_timeout=120
-                    )
-                except Exception as e:
-                    message = f"Can't send video {video_url}\n{e}"
-                    logger.debug(message)
-        if block.get('video_files'):
-            for video_file in block['video_files']:
-                try:
-                    with open(video_file, 'rb') as f:
-                        await bot.send_video(
+    try:
+        await retry_send_message(
+            bot,
+            update.message.chat.id,
+            title,
+            disable_web_page_preview=True,
+            parse_mode='Markdown'
+        )
+        
+        for block in content:
+            if block.get('text'):
+                await retry_send_message(
+                    bot,
+                    update.message.chat.id,
+                    block['text'],
+                    disable_web_page_preview=True
+                )
+            if block.get('images'):
+                for img_url in block['images']:
+                    try:
+                        await bot.send_photo(
                             chat_id=update.message.chat.id,
-                            video=f,
+                            photo=img_url,
                             read_timeout=120,
                             write_timeout=120,
                             connect_timeout=120,
                             pool_timeout=120
                         )
-                except Exception as e:
-                    message = f"Can't send video file {video_file}\n{e}"
-                    logger.debug(message)
+                    except Exception as e:
+                        message = f"Не удалось отправить изображение {img_url}\n{e}"
+                        logger.error(message)
+                        await retry_send_message(bot, update.message.chat.id, message)
+            if block.get('videos'):
+                for video_url in block['videos']:
+                    try:
+                        video_response = requests.get(video_url, timeout=120)
+                        video_file = BytesIO(video_response.content)
+                        video_file.name = 'video.mp4'
+                        await bot.send_video(
+                            chat_id=update.message.chat.id,
+                            video=video_file,
+                            read_timeout=120,
+                            write_timeout=120,
+                            connect_timeout=120,
+                            pool_timeout=120
+                        )
+                    except Exception as e:
+                        message = f"Не удалось отправить видео {video_url}\n{e}"
+                        logger.error(message)
+                        await retry_send_message(bot, update.message.chat.id, message)
+            if block.get('video_files'):
+                for video_file in block['video_files']:
+                    try:
+                        with open(video_file, 'rb') as f:
+                            await bot.send_video(
+                                chat_id=update.message.chat.id,
+                                video=f,
+                                read_timeout=120,
+                                write_timeout=120,
+                                connect_timeout=120,
+                                pool_timeout=120
+                            )
+                    except Exception as e:
+                        message = f"Не удалось отправить видео файл {video_file}\n{e}"
+                        logger.error(message)
+                        await retry_send_message(bot, update.message.chat.id, message)
+    except Exception as e:
+        error_message = f"Произошла ошибка при обработке контента: {str(e)}"
+        logger.error(error_message)
+        await retry_send_message(bot, update.message.chat.id, error_message)
 
 
 async def check_links(update: Update, context) -> None:
