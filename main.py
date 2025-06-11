@@ -84,47 +84,84 @@ def parse_mpd_file(mpd_path):
 
 
 def download_reddit_video(video_url):
-    video_file_name = os.path.join(TEMP_DIR, f'temp_video_{generate_random_string()}.mp4')
-    with open(video_file_name, 'wb') as video_file:
-        video_file.write(requests.get(video_url).content)
-
-    mpd_url = video_url.split("DASH_")[0] + "DASHPlaylist.mpd"
-    mpd_file_name = os.path.join(TEMP_DIR, f'temp_playlist_{generate_random_string()}.mpd')
-    with open(mpd_file_name, 'wb') as f:
-        f.write(requests.get(mpd_url).content)
-
-    audio_url = video_url.split("DASH_")[0] + parse_mpd_file(mpd_file_name)
-    if not audio_url:
-        return video_file_name
-
-    audio_file_name = os.path.join(TEMP_DIR, f'temp_audio_{generate_random_string()}.mp4')
-    with open(audio_file_name, 'wb') as audio_file:
-        audio_file.write(requests.get(audio_url).content)
-
-    output_file_name = f'compiled_video_{generate_random_string()}.mp4'
-    output_path = os.path.join(TEMP_DIR, output_file_name)
-
-    video_clip = VideoFileClip(video_file_name)
-    audio_clip = AudioFileClip(audio_file_name)
+    video_file_name = None
+    audio_file_name = None
+    mpd_file_name = None
     
-    video_clip.audio = audio_clip
-    video_clip.write_videofile(
-        output_path,
-        codec='libx264',
-        audio_codec='aac',
-        temp_audiofile='temp-audio.m4a',
-        remove_temp=True,
-        logger=None
-    )
-    
-    video_clip.close()
-    audio_clip.close()
+    try:
+        video_file_name = os.path.join(TEMP_DIR, f'temp_video_{generate_random_string()}.mp4')
+        video_response = requests.get(video_url, timeout=30)
+        video_response.raise_for_status()
+        
+        with open(video_file_name, 'wb') as video_file:
+            video_file.write(video_response.content)
 
-    os.remove(video_file_name)
-    os.remove(audio_file_name)
-    os.remove(mpd_file_name)
+        if not os.path.exists(video_file_name) or os.path.getsize(video_file_name) == 0:
+            raise Exception("Видео файл не был создан или пуст")
 
-    return output_file_name
+        mpd_url = video_url.split("DASH_")[0] + "DASHPlaylist.mpd"
+        mpd_file_name = os.path.join(TEMP_DIR, f'temp_playlist_{generate_random_string()}.mpd')
+        
+        mpd_response = requests.get(mpd_url, timeout=30)
+        mpd_response.raise_for_status()
+        
+        with open(mpd_file_name, 'wb') as f:
+            f.write(mpd_response.content)
+
+        audio_url = video_url.split("DASH_")[0] + parse_mpd_file(mpd_file_name)
+        if not audio_url:
+            return video_file_name
+
+        audio_file_name = os.path.join(TEMP_DIR, f'temp_audio_{generate_random_string()}.mp4')
+        audio_response = requests.get(audio_url, timeout=30)
+        audio_response.raise_for_status()
+        
+        with open(audio_file_name, 'wb') as audio_file:
+            audio_file.write(audio_response.content)
+
+        if not os.path.exists(audio_file_name) or os.path.getsize(audio_file_name) == 0:
+            raise Exception("Аудио файл не был создан или пуст")
+
+        output_file_name = f'compiled_video_{generate_random_string()}.mp4'
+        output_path = os.path.join(TEMP_DIR, output_file_name)
+
+        try:
+            video_clip = VideoFileClip(video_file_name)
+            audio_clip = AudioFileClip(audio_file_name)
+            
+            if video_clip.duration == 0 or audio_clip.duration == 0:
+                raise Exception("Некорректная длительность видео или аудио")
+            
+            video_clip.audio = audio_clip
+            video_clip.write_videofile(
+                output_path,
+                codec='libx264',
+                audio_codec='aac',
+                temp_audiofile='temp-audio.m4a',
+                remove_temp=True,
+                logger=None
+            )
+            
+            video_clip.close()
+            audio_clip.close()
+        except Exception as e:
+            logger.error(f"Ошибка при обработке видео: {str(e)}")
+            return video_file_name
+
+        os.remove(video_file_name)
+        os.remove(audio_file_name)
+        os.remove(mpd_file_name)
+
+        return output_file_name
+    except Exception as e:
+        logger.error(f"Ошибка при скачивании видео: {str(e)}")
+        if video_file_name and os.path.exists(video_file_name):
+            os.remove(video_file_name)
+        if audio_file_name and os.path.exists(audio_file_name):
+            os.remove(audio_file_name)
+        if mpd_file_name and os.path.exists(mpd_file_name):
+            os.remove(mpd_file_name)
+        raise
 
 
 async def get_pikabu_content(url, user):
@@ -196,11 +233,16 @@ async def get_reddit_content(url, user):
         video_data = submission.media['reddit_video']
         video_url = video_data['fallback_url']
 
-        if video_data['has_audio']:
-            compiled_video = download_reddit_video(video_url)
-            video_temp_path = os.path.join(TEMP_DIR, compiled_video)
-            content.append({'video_files': [video_temp_path]})
-        else:
+        try:
+            has_audio = video_data.get('has_audio', False)
+            if has_audio:
+                compiled_video = download_reddit_video(video_url)
+                video_temp_path = os.path.join(TEMP_DIR, compiled_video)
+                content.append({'video_files': [video_temp_path]})
+            else:
+                content.append({'videos': [video_url]})
+        except Exception as e:
+            logger.error(f"Ошибка при обработке видео Reddit: {str(e)}")
             content.append({'videos': [video_url]})
 
     return title, content
