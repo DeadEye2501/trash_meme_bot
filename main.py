@@ -376,10 +376,16 @@ async def process_content(update, title, content):
                                 connect_timeout=120,
                                 pool_timeout=120
                             )
+                        if os.path.exists(video_file):
+                            os.remove(video_file)
+                            logger.debug(f"Удален временный файл: {video_file}")
                     except Exception as e:
                         message = f"Не удалось отправить видео файл {video_file}\n{e}"
                         logger.error(message)
                         await retry_send_message(bot, update.message.chat.id, message)
+                        if os.path.exists(video_file):
+                            os.remove(video_file)
+                            logger.debug(f"Удален временный файл после ошибки: {video_file}")
     except Exception as e:
         error_message = f"Произошла ошибка при обработке контента: {str(e)}"
         logger.error(error_message)
@@ -387,6 +393,9 @@ async def process_content(update, title, content):
 
 
 async def check_links(update: Update, context) -> None:
+    if not update.message or not update.message.text:
+        return
+        
     message_text = update.message.text
     user = update.message.from_user
     chat_id = update.message.chat.id

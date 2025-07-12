@@ -9,6 +9,7 @@
 * `playwright install` - после установки зависимостей
 * копировать файл `.env` в папку проекта (`/trash_meme_bot/` по умолчанию) 
 * копировать файл `meme_bot.service` в `/etc/systemd/system/`
+* или копировать в `autostart.bat` в `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` для windows.
 
 ### Управление
 
