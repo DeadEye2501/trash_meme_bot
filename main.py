@@ -59,10 +59,18 @@ def generate_random_string(length=5):
     return ''.join(random.choice(letters) for _ in range(length))
 
 
+def escape_markdown(text):
+    if not text:
+        return text
+    escape_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}']
+    for char in escape_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
 def generate_title(user, url, title=None):
-    title = f'{title}\n' if title else ''
-    # return f'[{user.full_name}](tg://user?id={user.id})\n{title}[Посмотреть оригинал]({url})'
-    return f'{user.full_name}\n{title}[Посмотреть оригинал]({url})'
+    title = f'{escape_markdown(title)}\n' if title else ''
+    user_name = escape_markdown(user.full_name) if user.full_name else 'Unknown User'
+    return f'{user_name}\n{title}[Посмотреть оригинал]({url})'
 
 
 def parse_mpd_file(mpd_path):
@@ -325,10 +333,11 @@ async def process_content(update, title, content):
         
         for block in content:
             if block.get('text'):
+                escaped_text = escape_markdown(block['text'])
                 await retry_send_message(
                     bot,
                     update.message.chat.id,
-                    block['text'],
+                    escaped_text,
                     disable_web_page_preview=True
                 )
             if block.get('images'):
@@ -343,9 +352,9 @@ async def process_content(update, title, content):
                             pool_timeout=120
                         )
                     except Exception as e:
-                        message = f"Не удалось отправить изображение {img_url}\n{e}"
+                        message = f"Не удалось отправить изображение {img_url}\n{str(e)}"
                         logger.error(message)
-                        await retry_send_message(bot, update.message.chat.id, message)
+                        await retry_send_message(bot, update.message.chat.id, escape_markdown(message))
             if block.get('videos'):
                 for video_url in block['videos']:
                     try:
@@ -361,9 +370,9 @@ async def process_content(update, title, content):
                             pool_timeout=120
                         )
                     except Exception as e:
-                        message = f"Не удалось отправить видео {video_url}\n{e}"
+                        message = f"Не удалось отправить видео {video_url}\n{str(e)}"
                         logger.error(message)
-                        await retry_send_message(bot, update.message.chat.id, message)
+                        await retry_send_message(bot, update.message.chat.id, escape_markdown(message))
             if block.get('video_files'):
                 for video_file in block['video_files']:
                     try:
@@ -380,16 +389,16 @@ async def process_content(update, title, content):
                             os.remove(video_file)
                             logger.debug(f"Удален временный файл: {video_file}")
                     except Exception as e:
-                        message = f"Не удалось отправить видео файл {video_file}\n{e}"
+                        message = f"Не удалось отправить видео файл {video_file}\n{str(e)}"
                         logger.error(message)
-                        await retry_send_message(bot, update.message.chat.id, message)
+                        await retry_send_message(bot, update.message.chat.id, escape_markdown(message))
                         if os.path.exists(video_file):
                             os.remove(video_file)
                             logger.debug(f"Удален временный файл после ошибки: {video_file}")
     except Exception as e:
         error_message = f"Произошла ошибка при обработке контента: {str(e)}"
         logger.error(error_message)
-        await retry_send_message(bot, update.message.chat.id, error_message)
+        await retry_send_message(bot, update.message.chat.id, escape_markdown(error_message))
 
 
 async def check_links(update: Update, context) -> None:
@@ -417,7 +426,7 @@ async def check_links(update: Update, context) -> None:
             await update.message.delete()
     except Exception as e:
         await bot.send_message(
-            chat_id=chat_id, text=f'Не удалось обработать ссылку\n{e}',
+            chat_id=chat_id, text=f'Не удалось обработать ссылку\n{str(e)}',
             disable_web_page_preview=True
         )
 
