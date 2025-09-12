@@ -13,7 +13,8 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import telegram
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from telegram.request import HTTPXRequest
 from playwright.async_api import async_playwright
 import xml.etree.ElementTree as ET
 import asyncio
@@ -39,7 +40,7 @@ REDDIT_REGEX = r"(https?://)?(www\.)?reddit\.com/[^\s]+"
 PIKABU_REGEX = r"(https?://)?(www\.)?pikabu\.ru(/[^\s]*)?|link=https%3A%2F%2Fpikabu\.ru%2F[^\s]+"
 X_REGEX = r"(https?://)?(www\.)?(x\.com)/[^\s]+"
 
-bot = telegram.Bot(token=TOKEN)
+ 
 
 if PARSE_REDDIT:
     reddit = asyncpraw.Reddit(
@@ -257,7 +258,6 @@ async def get_reddit_content(url, user):
 
 
 async def get_x_content(url, user):
-    logger.debug(f'Get x url {url}')
     _xhr_calls = []
     content = []
 
@@ -276,9 +276,16 @@ async def get_x_content(url, user):
         await page.wait_for_selector("[data-testid='tweet']")
 
         tweet_calls = [f for f in _xhr_calls if "TweetResultByRestId" in f.url]
+        processed_tweets = set()
+        
         for xhr in tweet_calls:
             data = await xhr.json()
             if data:
+                tweet_id = data['data']['tweetResult']['result'].get('rest_id')
+                if tweet_id in processed_tweets:
+                    continue
+                processed_tweets.add(tweet_id)
+                
                 title = generate_title(user, url)
                 data = data['data']['tweetResult']['result']['legacy']
 
@@ -316,12 +323,11 @@ async def retry_send_message(bot, chat_id, text, **kwargs):
         except (TimedOut, NetworkError) as e:
             if attempt == max_retries - 1:
                 raise
-            logger.warning(f"Попытка {attempt + 1} не удалась: {str(e)}. Повторная попытка через {retry_delay} секунд...")
             await asyncio.sleep(retry_delay)
             retry_delay *= 2
 
 
-async def process_content(update, title, content):
+async def process_content(bot, update, title, content):
     try:
         await retry_send_message(
             bot,
@@ -340,6 +346,7 @@ async def process_content(update, title, content):
                     escaped_text,
                     disable_web_page_preview=True
                 )
+                
             if block.get('images'):
                 for img_url in block['images']:
                     try:
@@ -387,14 +394,12 @@ async def process_content(update, title, content):
                             )
                         if os.path.exists(video_file):
                             os.remove(video_file)
-                            logger.debug(f"Удален временный файл: {video_file}")
                     except Exception as e:
                         message = f"Не удалось отправить видео файл {video_file}\n{str(e)}"
                         logger.error(message)
                         await retry_send_message(bot, update.message.chat.id, escape_markdown(message))
                         if os.path.exists(video_file):
                             os.remove(video_file)
-                            logger.debug(f"Удален временный файл после ошибки: {video_file}")
     except Exception as e:
         error_message = f"Произошла ошибка при обработке контента: {str(e)}"
         logger.error(error_message)
@@ -408,30 +413,52 @@ async def check_links(update: Update, context) -> None:
     message_text = update.message.text
     user = update.message.from_user
     chat_id = update.message.chat.id
+    
+    logger.info(f"Получено сообщение от {user.full_name} (ID: {user.id}) в чате {chat_id}: {message_text[:50]}...")
 
     try:
         if re.search(PIKABU_REGEX, message_text, re.IGNORECASE) and PARSE_PIKABU:
+            logger.info("Парсинг Pikabu - начало")
             title, content = await get_pikabu_content(message_text, user)
-            await process_content(update, title, content)
+            logger.info(f"Парсинг Pikabu - завершен, блоков: {len(content)}")
+            await process_content(context.bot, update, title, content)
             await update.message.delete()
+            logger.info("Pikabu - успешно обработано")
 
         elif re.search(REDDIT_REGEX, message_text, re.IGNORECASE) and PARSE_REDDIT:
+            logger.info("Парсинг Reddit - начало")
             title, content = await get_reddit_content(message_text, user)
-            await process_content(update, title, content)
+            logger.info(f"Парсинг Reddit - завершен, блоков: {len(content)}")
+            await process_content(context.bot, update, title, content)
             await update.message.delete()
+            logger.info("Reddit - успешно обработано")
 
         elif re.search(X_REGEX, message_text, re.IGNORECASE) and PARSE_X:
+            logger.info("Парсинг Twitter/X - начало")
             title, content = await get_x_content(message_text, user)
-            await process_content(update, title, content)
+            logger.info(f"Парсинг Twitter/X - завершен, блоков: {len(content)}")
+            await process_content(context.bot, update, title, content)
             await update.message.delete()
+            logger.info("Twitter/X - успешно обработано")
     except Exception as e:
-        await bot.send_message(
+        logger.error(f"ОШИБКА обработки сообщения: {str(e)}", exc_info=True)
+        await context.bot.send_message(
             chat_id=chat_id, text=f'Не удалось обработать ссылку\n{str(e)}',
             disable_web_page_preview=True
         )
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    err = context.error
+    if isinstance(err, (NetworkError, TimedOut)):
+        logger.warning(f"Network issue during polling or request: {str(err)}")
+        return
+    logger.error("Unhandled exception in handler", exc_info=True)
+
+
 if __name__ == '__main__':
-    app = ApplicationBuilder().token(TOKEN).build()
+    request = HTTPXRequest(read_timeout=60, write_timeout=60, connect_timeout=60, pool_timeout=60)
+    app = ApplicationBuilder().token(TOKEN).request(request).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_links))
-    app.run_polling()
+    app.add_error_handler(error_handler)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
