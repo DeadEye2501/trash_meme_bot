@@ -33,12 +33,14 @@ logger.addHandler(console_handler)
 PARSE_PIKABU = bool(int(os.getenv('PARSE_PIKABU')))
 PARSE_REDDIT = bool(int(os.getenv('PARSE_REDDIT')))
 PARSE_X = bool(int(os.getenv('PARSE_X')))
+PARSE_PINTEREST = bool(int(os.getenv('PARSE_PINTEREST')))
 
 TEMP_DIR = os.getenv('TEMP_DIR')
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 REDDIT_REGEX = r"(https?://)?(www\.)?reddit\.com/[^\s]+"
 PIKABU_REGEX = r"(https?://)?(www\.)?pikabu\.ru(/[^\s]*)?|link=https%3A%2F%2Fpikabu\.ru%2F[^\s]+"
 X_REGEX = r"(https?://)?(www\.)?(x\.com)/[^\s]+"
+PINTEREST_REGEX = r"(https?://)?(www\.)?((pinterest\.[a-z.]+/pin/[^\s]+)|(pin\.it/[^\s]+))"
 
  
 
@@ -72,6 +74,17 @@ def generate_title(user, url, title=None):
     title = f'{escape_markdown(title)}\n' if title else ''
     user_name = escape_markdown(user.full_name) if user.full_name else 'Unknown User'
     return f'{user_name}\n{title}[Посмотреть оригинал]({url})'
+
+
+def build_http_headers():
+    headers = {}
+    user_agent = os.getenv('HTTP_USER_AGENT')
+    accept_language = os.getenv('HTTP_ACCEPT_LANGUAGE')
+    if user_agent:
+        headers['User-Agent'] = user_agent
+    if accept_language:
+        headers['Accept-Language'] = accept_language
+    return headers
 
 
 def parse_mpd_file(mpd_path):
@@ -313,6 +326,42 @@ async def get_x_content(url, user):
         return title, content
 
 
+async def get_pinterest_content(url, user):
+    logger.debug(f'Get pinterest url {url}')
+    match = re.search(PINTEREST_REGEX, url, re.IGNORECASE)
+    if match:
+        url = match.group(0)
+    headers = build_http_headers()
+    response = requests.get(url, allow_redirects=True, headers=headers, timeout=30)
+    modify_url = response.url
+    logger.debug(f'Get pinterest modify url {modify_url}')
+    
+    soup = BeautifulSoup(response.text, 'html.parser')
+    
+    title = generate_title(user, url)
+    content = []
+    
+    pin_text = None
+    title_tag = soup.find('title')
+    if title_tag and title_tag.string:
+        text_parts = title_tag.string.split('|')
+        pin_text = text_parts[0].strip()
+    
+    if pin_text:
+        content.append({'text': pin_text})
+    
+    video_match = re.search(r'https://v\d*.pinimg\.com/videos/[^"]+\.mp4', response.text)
+    if video_match:
+        video_url = video_match.group(0)
+        content.append({'videos': [video_url]})
+    else:
+        meta_image = soup.find('meta', property='og:image')
+        if meta_image and meta_image.get('content'):
+            content.append({'images': [meta_image.get('content')]})
+    
+    return title, content
+
+
 async def retry_send_message(bot, chat_id, text, **kwargs):
     max_retries = 3
     retry_delay = 5
@@ -440,6 +489,14 @@ async def check_links(update: Update, context) -> None:
             await process_content(context.bot, update, title, content)
             await update.message.delete()
             logger.info("Twitter/X - успешно обработано")
+        
+        elif re.search(PINTEREST_REGEX, message_text, re.IGNORECASE) and PARSE_PINTEREST:
+            logger.info("Парсинг Pinterest - начало")
+            title, content = await get_pinterest_content(message_text, user)
+            logger.info(f"Парсинг Pinterest - завершен, блоков: {len(content)}")
+            await process_content(context.bot, update, title, content)
+            await update.message.delete()
+            logger.info("Pinterest - успешно обработано")
     except Exception as e:
         logger.error(f"ОШИБКА обработки сообщения: {str(e)}", exc_info=True)
         await context.bot.send_message(
@@ -461,4 +518,4 @@ if __name__ == '__main__':
     app = ApplicationBuilder().token(TOKEN).request(request).build()
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_links))
     app.add_error_handler(error_handler)
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
