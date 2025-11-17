@@ -19,6 +19,7 @@ from playwright.async_api import async_playwright
 import xml.etree.ElementTree as ET
 import asyncio
 from telegram.error import TimedOut, NetworkError
+import subprocess
 
 load_dotenv()
 
@@ -105,12 +106,31 @@ def parse_mpd_file(mpd_path):
     return max_audio_url
 
 
-def download_reddit_video(video_url):
+def download_reddit_video(video_url, hls_url=None):
     video_file_name = None
     audio_file_name = None
     mpd_file_name = None
     
     try:
+        if hls_url:
+            output_file_name = f'compiled_video_{generate_random_string()}.mp4'
+            output_path = os.path.join(TEMP_DIR, output_file_name)
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    hls_url,
+                    "-c",
+                    "copy",
+                    output_path,
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return output_path
+
         video_file_name = os.path.join(TEMP_DIR, f'temp_video_{generate_random_string()}.mp4')
         video_response = requests.get(video_url, timeout=30)
         video_response.raise_for_status()
@@ -254,15 +274,15 @@ async def get_reddit_content(url, user):
     if submission.media and 'reddit_video' in submission.media:
         video_data = submission.media['reddit_video']
         video_url = video_data['fallback_url']
+        hls_url = video_data.get('hls_url')
 
         try:
-            has_audio = video_data.get('has_audio', False)
-            if has_audio:
-                compiled_video = download_reddit_video(video_url)
-                video_temp_path = os.path.join(TEMP_DIR, compiled_video)
-                content.append({'video_files': [video_temp_path]})
+            compiled_video_path = download_reddit_video(video_url, hls_url=hls_url)
+            if os.path.isabs(compiled_video_path):
+                video_temp_path = compiled_video_path
             else:
-                content.append({'videos': [video_url]})
+                video_temp_path = os.path.join(TEMP_DIR, compiled_video_path)
+            content.append({'video_files': [video_temp_path]})
         except Exception as e:
             logger.error(f"Ошибка при обработке видео Reddit: {str(e)}")
             content.append({'videos': [video_url]})
