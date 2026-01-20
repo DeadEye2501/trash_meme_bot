@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 import asyncio
 from telegram.error import TimedOut, NetworkError
 import subprocess
+import imageio_ffmpeg
 
 load_dotenv()
 
@@ -112,23 +113,28 @@ def download_reddit_video(video_url, hls_url=None):
     mpd_file_name = None
     
     try:
+        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+        
         if hls_url:
             output_file_name = f'compiled_video_{generate_random_string()}.mp4'
             output_path = os.path.join(TEMP_DIR, output_file_name)
-            subprocess.run(
+            result = subprocess.run(
                 [
-                    "ffmpeg",
+                    ffmpeg_path,
                     "-y",
                     "-i",
                     hls_url,
-                    "-c",
-                    "copy",
+                    "-map", "0:v:0",
+                    "-map", "0:a:0",
+                    "-c", "copy",
                     output_path,
                 ],
                 check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                capture_output=True,
+                text=True
             )
+            if result.stderr:
+                logger.debug(f"FFmpeg output: {result.stderr}")
             return output_path
 
         video_file_name = os.path.join(TEMP_DIR, f'temp_video_{generate_random_string()}.mp4')
