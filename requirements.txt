@@ -48,3 +48,5 @@ update-checker
 urllib3
 win32-setctime
 yarl
+yt-dlp
+instaloader

@@ -1,3 +1,4 @@
+import glob
 import os
 import re
 import string
@@ -21,6 +22,8 @@ import asyncio
 from telegram.error import TimedOut, NetworkError
 import subprocess
 import imageio_ffmpeg
+import instaloader
+from instaloader import Post
 
 load_dotenv()
 
@@ -36,6 +39,7 @@ PARSE_PIKABU = bool(int(os.getenv('PARSE_PIKABU')))
 PARSE_REDDIT = bool(int(os.getenv('PARSE_REDDIT')))
 PARSE_X = bool(int(os.getenv('PARSE_X')))
 PARSE_PINTEREST = bool(int(os.getenv('PARSE_PINTEREST')))
+PARSE_INSTAGRAM = bool(int(os.getenv('PARSE_INSTAGRAM')))
 
 TEMP_DIR = os.getenv('TEMP_DIR')
 TOKEN = os.getenv('TELEGRAM_TOKEN')
@@ -43,8 +47,9 @@ REDDIT_REGEX = r"(https?://)?(www\.)?reddit\.com/[^\s]+"
 PIKABU_REGEX = r"(https?://)?(www\.)?pikabu\.ru(/[^\s]*)?|link=https%3A%2F%2Fpikabu\.ru%2F[^\s]+"
 X_REGEX = r"(https?://)?(www\.)?(x\.com)/[^\s]+"
 PINTEREST_REGEX = r"(https?://)?(www\.)?((pinterest\.[a-z.]+/pin/[^\s]+)|(pin\.it/[^\s]+))"
+INSTAGRAM_REGEX = r"(https?://)?(www\.)?instagram\.com/(reel|p)/[A-Za-z0-9_-]+"
 
- 
+
 
 if PARSE_REDDIT:
     reddit = asyncpraw.Reddit(
@@ -388,6 +393,53 @@ async def get_pinterest_content(url, user):
     return title, content
 
 
+def _insta_load_post(normalized_url):
+    m = re.search(r'/(?:reel|p)/([A-Za-z0-9_-]+)', normalized_url, re.I)
+    if not m:
+        raise ValueError("Неверная ссылка Instagram")
+    shortcode = m.group(1)
+    out_dir = os.path.abspath(os.path.join(TEMP_DIR, f"insta_{shortcode}_{generate_random_string()}"))
+    os.makedirs(out_dir, exist_ok=True)
+    # Instaloader искажает пути с backslash (см. issue #1489); задаём каталог через dirname_pattern
+    dirname_pattern = os.path.join(out_dir, "{target}").replace("\\", "/")
+    L = instaloader.Instaloader(
+        save_metadata=False,
+        download_video_thumbnails=False,
+        dirname_pattern=dirname_pattern,
+    )
+    post = Post.from_shortcode(L.context, shortcode)
+    L.download_post(post, target=shortcode)
+    caption = (post.caption or "").strip()
+    content = []
+    if caption:
+        content.append({"text": caption})
+    imgs = []
+    for ext in ("*.jpg", "*.jpeg", "*.png"):
+        imgs.extend(glob.glob(os.path.join(out_dir, "**", ext), recursive=True))
+    vids = []
+    for ext in ("*.mp4", "*.webm"):
+        vids.extend(glob.glob(os.path.join(out_dir, "**", ext), recursive=True))
+    logger.debug("Instagram: out_dir=%s, найдено фото=%s, видео=%s", out_dir, len(imgs), len(vids))
+    if imgs:
+        content.append({"image_files": imgs})
+    if vids:
+        content.append({"video_files": vids})
+    return caption, content
+
+
+async def get_instagram_content(url, user):
+    logger.debug("Get instagram url %s", url)
+    m = re.search(INSTAGRAM_REGEX, url, re.IGNORECASE)
+    if not m:
+        raise ValueError("Ссылка не распознана как Instagram")
+    norm = m.group(0).split("?")[0]
+    if not norm.startswith("http"):
+        norm = "https://www." + norm.lstrip("./")
+    caption, content = await asyncio.to_thread(_insta_load_post, norm)
+    title = generate_title(user, url)
+    return title, content
+
+
 async def retry_send_message(bot, chat_id, text, **kwargs):
     max_retries = 3
     retry_delay = 5
@@ -437,6 +489,25 @@ async def process_content(bot, update, title, content):
                         message = f"Не удалось отправить изображение {img_url}\n{str(e)}"
                         logger.error(message)
                         await retry_send_message(bot, update.message.chat.id, escape_markdown(message))
+            if block.get('image_files'):
+                for path in block['image_files']:
+                    try:
+                        with open(path, 'rb') as f:
+                            await bot.send_photo(
+                                chat_id=update.message.chat.id,
+                                photo=f,
+                                read_timeout=120,
+                                write_timeout=120,
+                                connect_timeout=120,
+                                pool_timeout=120
+                            )
+                        if os.path.exists(path):
+                            os.remove(path)
+                    except Exception as e:
+                        logger.error("Не удалось отправить изображение %s: %s", path, e)
+                        await retry_send_message(bot, update.message.chat.id, escape_markdown(str(e)))
+                        if os.path.exists(path):
+                            os.remove(path)
             if block.get('videos'):
                 for video_url in block['videos']:
                     try:
@@ -523,6 +594,14 @@ async def check_links(update: Update, context) -> None:
             await process_content(context.bot, update, title, content)
             await update.message.delete()
             logger.info("Pinterest - успешно обработано")
+
+        elif re.search(INSTAGRAM_REGEX, message_text, re.IGNORECASE) and PARSE_INSTAGRAM:
+            logger.info("Парсинг Instagram - начало")
+            title, content = await get_instagram_content(message_text, user)
+            logger.info("Парсинг Instagram - завершен, блоков: %s", len(content))
+            await process_content(context.bot, update, title, content)
+            await update.message.delete()
+            logger.info("Instagram - успешно обработано")
     except Exception as e:
         logger.error(f"ОШИБКА обработки сообщения: {str(e)}", exc_info=True)
         await context.bot.send_message(

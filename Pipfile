@@ -10,7 +10,6 @@ aiohttp = "*"
 aiosignal = "*"
 aiosqlite = "*"
 anyio = "*"
-asyncpraw = {file = "https://github.com/praw-dev/asyncpraw/archive/master.zip"}
 asyncprawcore = "*"
 attrs = "*"
 backoff = "*"
@@ -54,6 +53,9 @@ update-checker = "*"
 urllib3 = "*"
 win32-setctime = "*"
 yarl = "*"
+yt-dlp = "*"
+instaloader = "*"
+asyncpraw = {file = "https://github.com/praw-dev/asyncpraw/archive/master.zip"}
 
 [dev-packages]
 
