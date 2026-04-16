@@ -304,9 +304,10 @@ async def get_reddit_content(url, user):
 async def get_x_content(url, user):
     _xhr_calls = []
     content = []
+    title = generate_title(user, url)
 
     def intercept_response(response):
-        if response.request.resource_type == "xhr":
+        if response.request.resource_type in ("xhr", "fetch"):
             _xhr_calls.append(response)
         return response
 
@@ -316,12 +317,19 @@ async def get_x_content(url, user):
         page = await context.new_page()
 
         page.on("response", intercept_response)
-        await page.goto(url, timeout=120000)
+        try:
+            async with page.expect_response(
+                lambda r: "TweetResultByRestId" in r.url,
+                timeout=15000,
+            ):
+                await page.goto(url, timeout=120000)
+        except Exception:
+            pass
         await page.wait_for_selector("[data-testid='tweet']")
 
         tweet_calls = [f for f in _xhr_calls if "TweetResultByRestId" in f.url]
         processed_tweets = set()
-        
+
         for xhr in tweet_calls:
             data = await xhr.json()
             if data:
@@ -329,8 +337,6 @@ async def get_x_content(url, user):
                 if tweet_id in processed_tweets:
                     continue
                 processed_tweets.add(tweet_id)
-                
-                title = generate_title(user, url)
                 data = data['data']['tweetResult']['result']['legacy']
 
                 if data.get('full_text'):
@@ -400,7 +406,6 @@ def _insta_load_post(normalized_url):
     shortcode = m.group(1)
     out_dir = os.path.abspath(os.path.join(TEMP_DIR, f"insta_{shortcode}_{generate_random_string()}"))
     os.makedirs(out_dir, exist_ok=True)
-    # Instaloader искажает пути с backslash (см. issue #1489); задаём каталог через dirname_pattern
     dirname_pattern = os.path.join(out_dir, "{target}").replace("\\", "/")
     L = instaloader.Instaloader(
         save_metadata=False,
