@@ -12,14 +12,13 @@
 |-----------|-------------------|-----------------------------------------------------|
 | Pikabu    | `PARSE_PIKABU=1`  | requests + BeautifulSoup                            |
 | Reddit    | `PARSE_REDDIT=1`  | asyncpraw (нужны `REDDIT_CLIENT_*`) + ffmpeg/moviepy для видео |
-| Twitter/X | `PARSE_X=1`       | playwright (headless Chromium, перехват XHR)        |
+| Twitter/X | `PARSE_X=1`       | requests (официальный embed-эндпоинт `cdn.syndication.twimg.com`) |
 | Pinterest | `PARSE_PINTEREST=1` | requests + BeautifulSoup                          |
 | Instagram | `PARSE_INSTAGRAM=1` | instaloader (анонимный — IG может вернуть «Этот контент требует авторизации») |
 
 ## Установка
 
 * `pip install -r requirements.txt` — установка зависимостей (можно `pipenv install` если используется Pipfile)
-* `playwright install chromium` — установка браузера для Twitter-парсера
 * скопировать `.env.example` в `.env` и заполнить токены и пути
 * для systemd скопировать `meme_bot.service` в `/etc/systemd/system/`
 * для Windows положить `autostart_meme_bot.bat` в `shell:startup`

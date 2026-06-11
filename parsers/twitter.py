@@ -1,72 +1,112 @@
+import asyncio
+import math
 import os
+import re
 
-from playwright.async_api import async_playwright
+import requests
 
-from parsers.common import generate_title
+from parsers.common import build_http_headers, generate_title, logger
 
 
 PARSE_X = bool(int(os.getenv('PARSE_X', '0')))
-X_REGEX = r"(https?://)?(www\.)?(x\.com)/[^\s]+"
+X_REGEX = r"(https?://)?(www\.|mobile\.)?(twitter\.com|x\.com)/\S*?status/\d+"
+
+_STATUS_ID_REGEX = re.compile(r"(?:twitter\.com|x\.com)/\S*?status/(\d+)", re.IGNORECASE)
+_SYNDICATION_URL = "https://cdn.syndication.twimg.com/tweet-result"
+
+# Telegram bot API caps uploads at ~50 MB; keep a margin for the chosen variant.
+_VIDEO_SIZE_CAP = 45 * 1024 * 1024
+_DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+
+
+def _syndication_token(tweet_id):
+    """Reproduce the token the embed widget derives from the tweet id."""
+    x = (int(tweet_id) / 1e15) * math.pi
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    whole = int(x)
+    frac = x - whole
+    out = ""
+    while whole > 0:
+        out = digits[whole % 36] + out
+        whole //= 36
+    token = out or "0"
+    token += "."
+    for _ in range(20):
+        frac *= 36
+        d = int(frac)
+        token += digits[d]
+        frac -= d
+    return re.sub(r"(0+|\.)", "", token)
+
+
+def _pick_video_url(media):
+    info = media.get('video_info') or {}
+    variants = [v for v in info.get('variants', []) if v.get('content_type') == 'video/mp4' and v.get('bitrate')]
+    if not variants:
+        fallback = info.get('variants') or []
+        return fallback[0].get('url') if fallback else None
+
+    variants.sort(key=lambda v: v['bitrate'])
+    duration_s = (info.get('duration_millis') or 0) / 1000
+
+    best = variants[0]  # lowest quality as a safe default
+    for variant in variants:
+        if duration_s:
+            estimated_bytes = variant['bitrate'] / 8 * duration_s
+            if estimated_bytes <= _VIDEO_SIZE_CAP:
+                best = variant
+        else:
+            best = variant  # no duration info — assume short clip, take best quality
+    return best.get('url')
+
+
+def _get_x_content_sync(url, user):
+    match = _STATUS_ID_REGEX.search(url)
+    if not match:
+        raise ValueError("Не удалось извлечь id твита из ссылки")
+    tweet_id = match.group(1)
+    logger.debug("Get x tweet id %s", tweet_id)
+
+    headers = {'User-Agent': _DEFAULT_UA, **build_http_headers()}
+    params = {'id': tweet_id, 'token': _syndication_token(tweet_id), 'lang': 'en'}
+    response = requests.get(_SYNDICATION_URL, params=params, headers=headers, timeout=30)
+    if response.status_code in (400, 404):
+        raise ValueError("Твит не найден, удалён или скрыт")
+    response.raise_for_status()
+    data = response.json()
+
+    if data.get('__typename') == 'TweetTombstone':
+        raise ValueError("Твит недоступен (удалён, защищён или ограничен по возрасту)")
+
+    title = generate_title(user, url)
+    content = []
+
+    text = (data.get('text') or '').strip()
+    if text:
+        content.append({'text': text})
+
+    images = []
+    videos = []
+    for media in data.get('mediaDetails') or []:
+        if media.get('type') == 'photo':
+            img = media.get('media_url_https')
+            if img:
+                images.append(img)
+        else:  # video / animated_gif
+            video_url = _pick_video_url(media)
+            if video_url:
+                videos.append(video_url)
+
+    if images:
+        content.append({'images': images})
+    if videos:
+        content.append({'videos': videos})
+
+    logger.debug("X tweet %s: text=%s, images=%s, videos=%s", tweet_id, bool(text), len(images), len(videos))
+    return title, content
 
 
 async def get_x_content(url, user):
-    _xhr_calls = []
-    content = []
-    title = generate_title(user, url)
-
-    def intercept_response(response):
-        if response.request.resource_type in ("xhr", "fetch"):
-            _xhr_calls.append(response)
-        return response
-
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        try:
-            context = await browser.new_context(viewport={"width": 1920, "height": 1080})
-            page = await context.new_page()
-
-            page.on("response", intercept_response)
-            try:
-                async with page.expect_response(
-                    lambda r: "TweetResultByRestId" in r.url,
-                    timeout=15000,
-                ):
-                    await page.goto(url, timeout=120000)
-            except Exception:
-                pass
-            await page.wait_for_selector("[data-testid='tweet']")
-
-            tweet_calls = [f for f in _xhr_calls if "TweetResultByRestId" in f.url]
-            processed_tweets = set()
-
-            for xhr in tweet_calls:
-                data = await xhr.json()
-                if data:
-                    tweet_id = data['data']['tweetResult']['result'].get('rest_id')
-                    if tweet_id in processed_tweets:
-                        continue
-                    processed_tweets.add(tweet_id)
-                    data = data['data']['tweetResult']['result']['legacy']
-
-                    if data.get('full_text'):
-                        content.append({'text': data['full_text']})
-
-                    if data.get('entities'):
-                        if data['entities'].get('media'):
-                            for item in data['entities']['media']:
-                                if item['type'] == 'photo':
-                                    content.append({'images': [item['media_url_https']]})
-
-                                elif item['type'] == 'video':
-                                    max_bitrate = 0
-                                    max_bitrate_variant = 0
-                                    for num, variant in enumerate(item['video_info']['variants']):
-                                        if variant['content_type'] == 'video/mp4':
-                                            if 1000000 > variant['bitrate'] > max_bitrate:
-                                                max_bitrate = variant['bitrate']
-                                                max_bitrate_variant = num
-                                    content.append(
-                                        {'videos': [item['video_info']['variants'][max_bitrate_variant]['url']]})
-        finally:
-            await browser.close()
-        return title, content
+    logger.debug("Get x url %s", url)
+    return await asyncio.to_thread(_get_x_content_sync, url, user)

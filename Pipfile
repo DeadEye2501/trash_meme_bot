@@ -8,10 +8,10 @@ beautifulsoup4 = "*"
 imageio-ffmpeg = "*"
 instaloader = "*"
 moviepy = "*"
-playwright = "*"
 python-dotenv = "*"
 python-telegram-bot = "*"
 requests = "*"
+sniffio = "*"  # transitive dep of httpx/anyio that pipenv's resolver omits; pin so lock/sync keep it
 asyncpraw = {file = "https://github.com/praw-dev/asyncpraw/archive/master.zip"}
 
 [dev-packages]
