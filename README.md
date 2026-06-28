@@ -14,7 +14,7 @@
 | Reddit    | `PARSE_REDDIT=1`  | asyncpraw (нужны `REDDIT_CLIENT_*`) + ffmpeg/moviepy для видео |
 | Twitter/X | `PARSE_X=1`       | requests (официальный embed-эндпоинт `cdn.syndication.twimg.com`) |
 | Pinterest | `PARSE_PINTEREST=1` | requests + BeautifulSoup                          |
-| Instagram | `PARSE_INSTAGRAM=1` | instaloader (анонимный — IG может вернуть «Этот контент требует авторизации») |
+| Instagram | `PARSE_INSTAGRAM=1` | instaloader (нужен вход под аккаунтом — IG закрыл анонимный доступ) |
 
 ## Установка
 
@@ -32,8 +32,19 @@
 * `TEMP_DIR` — куда складывать временные файлы (видео из Reddit/IG)
 * `PARSE_*` — какие источники включить (`1` или `0`)
 * `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT` — если включён `PARSE_REDDIT`
+* `INSTAGRAM_USERNAME` — если включён `PARSE_INSTAGRAM` (анонимный доступ IG закрыл, посты
+  тянутся через приватный web-API с куками сессии). Сессию надёжнее всего перенести из
+  браузера: залогинься в instagram.com, закрой браузер и выполни
+  `pip install browser_cookie3` + `python tools/ig_import_session.py [chrome|firefox|edge]`.
+  Скрипт сохранит session-файл и подскажет, какой `INSTAGRAM_USERNAME` вписать в `.env`.
+  Аккаунт может быть техническим. Сессия живёт месяцами; когда протухнет, бот ответит
+  «Этот контент требует авторизации» — просто переимпортируй сессию тем же скриптом.
 
 Опционально:
+
+* `INSTAGRAM_SESSIONFILE` — путь к session-файлу, если он лежит не в стандартном месте instaloader
+* `INSTAGRAM_PASSWORD` — вход по логину/паролю при первом запуске (нежелательно: IG часто
+  требует checkpoint и выше риск временной блокировки; импорт из браузера надёжнее)
 
 * `HTTP_USER_AGENT`, `HTTP_ACCEPT_LANGUAGE` — заголовки для requests (Pikabu/Pinterest/Reddit)
 
