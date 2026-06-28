@@ -1,3 +1,7 @@
+import sys
+
+sys.dont_write_bytecode = True  # не плодить __pycache__ в проекте
+
 import asyncio
 import logging
 import os

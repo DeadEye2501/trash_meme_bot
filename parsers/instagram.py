@@ -56,6 +56,7 @@ def _get_loader_locked():
             "INSTAGRAM_USERNAME не задан — анонимный доступ к Instagram закрыт"
         )
     L = instaloader.Instaloader(save_metadata=False, download_video_thumbnails=False)
+    logged_in_by_password = False
     try:
         L.load_session_from_file(INSTAGRAM_USERNAME, INSTAGRAM_SESSIONFILE)
         logger.info("Instagram: сессия загружена для @%s", INSTAGRAM_USERNAME)
@@ -67,6 +68,27 @@ def _get_loader_locked():
             ) from e
         logger.info("Instagram: session-файл не найден, вход по паролю @%s", INSTAGRAM_USERNAME)
         L.login(INSTAGRAM_USERNAME, INSTAGRAM_PASSWORD)
+        logged_in_by_password = True
+    # Пустой sessionid = нерабочая сессия. Две частые причины:
+    #  1) вход по паролю с сервера — IG ставит checkpoint и выдаёт ds_user_id, но НЕ sessionid;
+    #  2) импорт кук из Chrome 127+, где они зашифрованы App-Bound Encryption.
+    # С таким файлом IG редиректит на логин и всё рушится — отсекаем сразу.
+    sessionid = next(
+        (c.value for c in L.context._session.cookies if c.name == "sessionid"), ""
+    )
+    if not sessionid:
+        if logged_in_by_password:
+            raise InstagramAuthRequired(
+                "Instagram принял пароль, но не выдал сессию (checkpoint: требует "
+                "подтверждения входа). Войди в IG в браузере, подтверди «это вы», и "
+                "импортируй сессию: python tools/ig_import_session.py firefox"
+            )
+        raise InstagramAuthRequired(
+            "В session-файле Instagram нет рабочего sessionid — переимпортируй сессию "
+            "(python tools/ig_import_session.py firefox)"
+        )
+    # Сессия с sessionid — сохраняем (на случай свежего логина) и переиспользуем.
+    if logged_in_by_password:
         L.save_session_to_file(INSTAGRAM_SESSIONFILE)
         logger.info("Instagram: вход выполнен, сессия сохранена")
     _loader = L
@@ -104,6 +126,12 @@ def _media_info(loader, media_id, shortcode):
     r = requests.get(url, headers=headers, cookies=cookies, timeout=30)
     if r.status_code in (401, 403):
         raise InstagramAuthRequired(f"Instagram отклонил запрос ({r.status_code})")
+    # При недействительной сессии IG не отдаёт 401, а редиректит (200) на HTML-страницу
+    # логина. Ловим это до r.json(), иначе падаем с «Expecting value: line 1 column 1».
+    if "/accounts/login" in r.url or "application/json" not in r.headers.get("content-type", ""):
+        raise InstagramAuthRequired(
+            "Instagram вернул страницу логина — сессия недействительна, переимпортируй её"
+        )
     r.raise_for_status()
     items = (r.json() or {}).get("items") or []
     if not items:
